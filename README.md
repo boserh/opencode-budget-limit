@@ -22,14 +22,6 @@ feet.
 
 ![Budget in the sidebar, a warning toast at 80%, and the run stopping at the limit](docs/demo.gif)
 
-The sidebar block sits directly under the built-in Context block:
-
-![The Budget block in the sidebar, directly under Context](docs/sidebar.png)
-
-Warnings arrive as toasts before the limit becomes a wall:
-
-![A toast reading "80% - $6.41 of $8.00, $1.59 left."](docs/warning-toast.png)
-
 ## What it does
 
 - **Hard stop.** When a session reaches its limit, the next turn is cancelled
@@ -39,6 +31,9 @@ Warnings arrive as toasts before the limit becomes a wall:
   visible before it becomes a wall.
 - **Sidebar block.** A progress bar, amount spent, and percentage used, rendered
   directly under the built-in Context block.
+
+  ![The Budget block in the sidebar, directly under Context](docs/sidebar.png)
+
 - **Resume.** Raising the limit after a run was cut short drops `continue` into
   the prompt box, so picking the work back up is one keypress — and the wording
   stays yours.
@@ -199,6 +194,21 @@ on Node 20 and 22, on Linux and macOS, in CI.
 Path resolution is tested by redirecting `HOME` and `XDG_DATA_HOME` and
 re-importing `src/budget-file.js` under a unique query string, because the
 legacy path is computed once at import time.
+
+### Releasing
+
+Pushing a `v*` tag publishes to npm. The workflow runs the tests and the build,
+refuses to continue if the tag and `package.json` disagree, and authenticates
+through npm trusted publishing (OIDC) — there is no npm token stored in this
+repository.
+
+```sh
+npm version patch      # or minor / major; commits and tags
+git push --follow-tags
+```
+
+npm does not allow a version number to be reused, even after `unpublish`, so a
+tag pushed by mistake burns that number permanently.
 
 ### Why there is a build step
 
