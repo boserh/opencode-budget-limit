@@ -1,0 +1,42 @@
+{
+  "name": "opencode-budget-limit",
+  "version": "0.1.0",
+  "description": "Per-session spend limits for opencode, with a sidebar readout.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/boserh/opencode-budget-limit.git"
+  },
+  "bugs": {
+    "url": "https://github.com/boserh/opencode-budget-limit/issues"
+  },
+  "homepage": "https://github.com/boserh/opencode-budget-limit#readme",
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "budget",
+    "cost",
+    "spend-limit"
+  ],
+  "exports": {
+    "./server": "./src/server.js",
+    "./tui": "./dist/tui.js"
+  },
+  "files": [
+    "src",
+    "dist"
+  ],
+  "engines": {
+    "opencode": ">=1.18.0"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "prepublishOnly": "node build.mjs"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.25.0",
+    "@babel/preset-typescript": "^7.24.0",
+    "babel-preset-solid": "^1.9.0"
+  }
+}
