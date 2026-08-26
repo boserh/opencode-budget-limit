@@ -35,7 +35,7 @@ function dbg(...args) {
  * { "version": 2, "default": 1, "sessions": { "<id>": { "limit": 3, "updatedAt": 1700000000000 } } }
  * v1 (flat { "<id>": number }) is migrated on load.
  */
-function loadStore() {
+export function loadStore() {
   let raw
   try {
     raw = JSON.parse(readFileSync(resolveReadFile(), "utf8"))
@@ -57,7 +57,7 @@ function loadStore() {
   return { version: 2, default: FALLBACK_DEFAULT, sessions }
 }
 
-function saveStore(store) {
+export function saveStore(store) {
   const cutoff = Date.now() - PRUNE_AFTER_MS
   for (const [id, entry] of Object.entries(store.sessions)) {
     if ((entry.updatedAt ?? 0) < cutoff) delete store.sessions[id]
