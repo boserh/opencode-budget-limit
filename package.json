@@ -32,7 +32,7 @@
   },
   "scripts": {
     "build": "node build.mjs",
-    "test": "node --test 'test/*.test.js'",
+    "test": "node --test",
     "prepublishOnly": "node build.mjs"
   },
   "devDependencies": {
