@@ -1,0 +1,45 @@
+name: Release
+
+# Publishing is deliberately tied to a tag rather than to pushes on main:
+# npm will not let a version number be reused, even after unpublish, so the
+# act of releasing has to be explicit and hard to do by accident.
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Required for npm trusted publishing: the job exchanges a short-lived
+      # OIDC token with the registry instead of holding a long-lived secret.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      # Trusted publishing needs a recent npm; the version bundled with Node
+      # is not guaranteed to support it.
+      - run: npm install -g npm@latest
+
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
+      - name: Fail if the tag disagrees with package.json
+        # Publishing a tag that does not match the manifest burns a version
+        # number permanently, so this is checked before anything is sent.
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          manifest="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$manifest" ]; then
+            echo "tag v$tag does not match package.json version $manifest" >&2
+            exit 1
+          fi
+
+      - run: npm publish --provenance --access public
