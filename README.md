@@ -1,11 +1,28 @@
 # opencode-budget-limit
 
-Per-session spend limits for [opencode](https://opencode.ai), with a live
-readout in the sidebar.
+[![CI](https://github.com/boserh/opencode-budget-limit/actions/workflows/ci.yml/badge.svg)](https://github.com/boserh/opencode-budget-limit/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/opencode-budget-limit)](https://www.npmjs.com/package/opencode-budget-limit)
+[![license](https://img.shields.io/npm/l/opencode-budget-limit)](LICENSE)
 
-The plugin tracks what a session has cost, stops a run once it crosses the
-limit, and warns before it gets there. Sub-agent sessions bill to the session
-you actually see, so a spawned agent cannot quietly spend past the ceiling.
+**Stop an [opencode](https://opencode.ai) session before it spends more than you
+meant to.**
+
+An agent left to grind on a hard problem does not stop at the amount you had in
+mind — it stops when the task is done, or when it gives up. A refactor you
+expected to cost a couple of dollars can run all evening and hand you the bill
+afterwards, and a session that spawns sub-agents multiplies that quietly, in
+parallel, out of sight.
+
+This plugin puts a ceiling on it. Every session gets a spend limit, the sidebar
+shows how much of it is gone, toasts warn you on the way up, and the run is
+cancelled at the line rather than after it. Sub-agents bill to the session you
+are actually looking at, so nothing spends behind your back. When you decide the
+work was worth more, `/budget +2` raises the limit and puts the run back on its
+feet.
+
+![Budget in the sidebar, a warning toast at 80%, and the run stopping at the limit](docs/demo.gif)
+
+The sidebar block sits directly under the built-in Context block:
 
 ![The Budget block in the sidebar, directly under Context](docs/sidebar.png)
 
@@ -167,10 +184,21 @@ Then:
 ```sh
 npm install
 npm run build     # src/tui.tsx -> dist/tui.js
+npm test          # node:test, no test framework to install
 ```
 
 `npm run build` is required before the TUI half will load, and it runs
 automatically on `prepublishOnly`.
+
+### Tests
+
+The suite covers the two things that would silently lose a user's limits:
+where the limits file resolves to, and how older files are migrated. Both run
+on Node 20 and 22, on Linux and macOS, in CI.
+
+Path resolution is tested by redirecting `HOME` and `XDG_DATA_HOME` and
+re-importing `src/budget-file.js` under a unique query string, because the
+legacy path is computed once at import time.
 
 ### Why there is a build step
 
@@ -199,6 +227,7 @@ src/budget-file.js   shared path resolution — imported by both entries
 src/server.js        enforcement; default-exports { id, server }
 src/tui.tsx          sidebar block; default-exports { id, tui }
 build.mjs            src/tui.tsx -> dist/tui.js
+test/                node:test suites for path resolution and migration
 ```
 
 A plugin module may default-export `{ id, server }` or `{ id, tui }`, but never
