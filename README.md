@@ -158,6 +158,40 @@ Earlier versions kept this file at
 new one is missing, and the next write migrates it, so upgrading does not lose
 existing limits.
 
+### Spend file
+
+Alongside it sits `budget-spend.json`, written by the server and read by the
+sidebar:
+
+```json
+{
+  "version": 1,
+  "sessions": {
+    "ses_abc123": { "spent": 0.8156, "subagents": true, "updatedAt": 1755600000000 }
+  }
+}
+```
+
+It is a cache, not state — delete it and the next turn rebuilds it. The total is
+recorded under every session in the branch, so opening the sidebar on a
+sub-agent session shows the budget that governs it. Entries are pruned on the
+same 30-day schedule as limits.
+
+### Why Budget reads higher than Context
+
+A limit applies to the root session *and* every sub-agent session spawned from
+it, because all of them are billed. The host's Context block reports one
+session's own cost, so it reads lower whenever sub-agents ran — a session that
+spent $0.39 itself while its sub-agents spent $0.43 shows `$0.39` in Context and
+`$0.82` against the limit. The Budget block says **with sub-agents** in its
+title when that is what it is showing.
+
+Only the server computes this sum; the sidebar reads the published result. That
+is deliberate. A sidebar that added up its own number would have to use the TUI
+state API, which reaches one session at a time and cannot enumerate sub-agent
+sessions — so it would quietly reproduce Context's figure and show a
+half-empty bar while the run was being cut off at the limit.
+
 ## Development
 
 Clone the repo and point both config files at the checkout:
@@ -187,9 +221,16 @@ automatically on `prepublishOnly`.
 
 ### Tests
 
-The suite covers the two things that would silently lose a user's limits:
-where the limits file resolves to, and how older files are migrated. Both run
-on Node 20 and 22, on Linux and macOS, in CI.
+The suite covers the failures that would be silent rather than loud: where the
+limits file resolves to, how older files are migrated, and what total the
+sidebar is handed. All run on Node 20 and 22, on Linux and macOS, in CI.
+
+Spend publishing is exercised through the plugin's real event hooks against a
+stubbed host, using costs taken from an actual session. One case announces only
+the root's message, so the child's spend has to arrive through the backfill walk
+over `session.children()` — without it, the suite passes even when sub-agent
+cost is dropped entirely and the sidebar falls back to the Context block's
+figure.
 
 Path resolution is tested by redirecting `HOME` and `XDG_DATA_HOME` and
 re-importing `src/budget-file.js` under a unique query string, because the

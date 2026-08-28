@@ -34,6 +34,22 @@ export function resolveBudgetFile() {
   return join(dataHome, "opencode", "budget-limit.json")
 }
 
+/**
+ * Absolute path to the spend cache.
+ *
+ * Kept apart from the limits file because the two have different natures: a
+ * limit is user intent and must survive anything, whereas spend is derived
+ * from the session store and can be recomputed at will. Splitting them also
+ * keeps a per-turn write off the file that holds the intent.
+ *
+ * Written only by the server entry, read only by the tui entry. That direction
+ * is what stops the sidebar and the enforcement from disagreeing: there is one
+ * implementation of the sum, not two.
+ */
+export function resolveSpendFile() {
+  return join(resolveBudgetDir(), "budget-spend.json")
+}
+
 /** Directory holding the limits file, for siblings such as the debug log. */
 export function resolveBudgetDir() {
   return dirname(resolveBudgetFile())

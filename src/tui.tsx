@@ -13,7 +13,7 @@
  */
 import { readFileSync } from "fs"
 import { createMemo, createSignal, onCleanup } from "solid-js"
-import { resolveReadFile } from "./budget-file.js"
+import { resolveReadFile, resolveSpendFile } from "./budget-file.js"
 
 const FALLBACK_DEFAULT = Number(process.env.OPENCODE_BUDGET_DEFAULT) || 1
 const POLL_MS = 2000
@@ -38,26 +38,43 @@ function readLimit(sessionID) {
   }
 }
 
+/**
+ * Spend is read, never computed here.
+ *
+ * The TUI state API can only reach one session at a time, so a sum built in
+ * this file would silently exclude the sub-agent sessions a run spawned — the
+ * same blind spot the host's Context block has. The server entry already walks
+ * root plus children to decide when to stop a run, and publishes that total;
+ * reading it back is what keeps the bar and the enforcement on one number.
+ */
+function readSpend(sessionID) {
+  try {
+    const raw = JSON.parse(readFileSync(resolveSpendFile(), "utf8"))
+    const entry = raw?.sessions?.[sessionID]
+    if (typeof entry?.spent !== "number") return null
+    return { spent: entry.spent, subagents: entry.subagents === true }
+  } catch {
+    return null
+  }
+}
+
 function BudgetPanel(props) {
   const theme = () => props.api.theme.current
 
+  const initial = readSpend(props.session_id)
   const [limit, setLimit] = createSignal(readLimit(props.session_id))
-  const timer = setInterval(() => setLimit(readLimit(props.session_id)), POLL_MS)
-  onCleanup(() => clearInterval(timer))
+  const [spent, setSpent] = createSignal(initial?.spent ?? 0)
+  const [subagents, setSubagents] = createSignal(initial?.subagents ?? false)
 
-  /**
-   * Prefer the session rollup the built-in Context block uses; fall back to
-   * summing assistant messages if the running host does not expose it.
-   */
-  const spent = createMemo(() => {
-    const session = props.api.state.session.get?.(props.session_id)
-    if (typeof session?.cost === "number") return session.cost
-    let total = 0
-    for (const message of props.api.state.session.messages(props.session_id)) {
-      if (message.role === "assistant" && message.cost > 0) total += message.cost
-    }
-    return total
-  })
+  const poll = () => {
+    setLimit(readLimit(props.session_id))
+    const next = readSpend(props.session_id)
+    if (!next) return
+    setSpent(next.spent)
+    setSubagents(next.subagents)
+  }
+  const timer = setInterval(poll, POLL_MS)
+  onCleanup(() => clearInterval(timer))
 
   /** null means "no finite limit", which renders as an unlimited session. */
   const ratio = createMemo(() => {
@@ -84,6 +101,7 @@ function BudgetPanel(props) {
     <box>
       <text fg={theme().text}>
         <b>Budget</b>
+        {subagents() ? " (with sub-agents)" : ""}
       </text>
       {ratio() === null ? (
         <text fg={theme().textMuted}>{currency.format(spent())} spent, no limit</text>

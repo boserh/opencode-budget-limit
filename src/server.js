@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, renameSync, appendFileSync, statSync } from "fs"
 import { join } from "path"
-import { resolveBudgetDir, resolveReadFile, resolveWriteFile } from "./budget-file.js"
+import { resolveBudgetDir, resolveReadFile, resolveWriteFile, resolveSpendFile } from "./budget-file.js"
 
 const DEBUG_FILE = join(resolveBudgetDir(), "budget-debug.log")
 
@@ -72,6 +72,40 @@ export function saveStore(store) {
   }
 }
 
+/**
+ * Spend cache, published for the sidebar.
+ *
+ * The sidebar cannot compute this itself: the TUI state API exposes sessions
+ * one id at a time (`state.session.get`), with no way to enumerate the
+ * sub-agent sessions a run spawned. Summing only the visible session is what
+ * the host's own Context block does — which is why Context reads lower than
+ * the limit does whenever sub-agents ran, and why a sidebar built on the same
+ * number would show a half-empty bar while the run was being cut off.
+ */
+function loadSpend() {
+  try {
+    const raw = JSON.parse(readFileSync(resolveSpendFile(), "utf8"))
+    if (raw?.version === 1 && raw.sessions) return raw
+  } catch {}
+  return { version: 1, sessions: {} }
+}
+
+function saveSpend(spend) {
+  const cutoff = Date.now() - PRUNE_AFTER_MS
+  for (const [id, entry] of Object.entries(spend.sessions)) {
+    if ((entry.updatedAt ?? 0) < cutoff) delete spend.sessions[id]
+  }
+  try {
+    resolveWriteFile() // ensures the data directory exists
+    const file = resolveSpendFile()
+    const tmp = `${file}.tmp`
+    writeFileSync(tmp, JSON.stringify(spend, null, 2))
+    renameSync(tmp, file)
+  } catch (e) {
+    dbg("[budget] saveSpend error:", e?.message)
+  }
+}
+
 const serialize = (limit) => (limit === UNLIMITED ? "unlimited" : limit)
 const deserialize = (limit) => (limit === "unlimited" || limit === null ? UNLIMITED : limit)
 const fmt = (amount) => (amount === UNLIMITED ? "unlimited" : `$${amount.toFixed(2)}`)
@@ -79,6 +113,14 @@ const fmt = (amount) => (amount === UNLIMITED ? "unlimited" : `$${amount.toFixed
 export const BudgetPlugin = async ({ client, directory }) => {
   const store = loadStore()
   saveStore(store) // persist migration / prune once at startup
+  const spend = loadSpend()
+
+  /** @type {Map<string, ReturnType<typeof setTimeout>>} rootID -> pending publish */
+  const publishTimers = new Map()
+  /** @type {Set<string>} roots whose total includes sub-agent spend */
+  const subagents = new Set()
+  /** @type {Map<string, Set<string>>} rootID -> every session id billing to it */
+  const branch = new Map()
 
   /** @type {Map<string, Map<string, number>>} rootID -> messageID -> cost */
   const costs = new Map()
@@ -131,6 +173,31 @@ export const BudgetPlugin = async ({ client, directory }) => {
     return total
   }
 
+  /**
+   * Publish the running total for the sidebar. Coalesced: costs arrive per
+   * assistant message, and a turn produces many, so writing on each one would
+   * churn the file for no visible gain.
+   */
+  function publishSpent(rootID) {
+    if (publishTimers.has(rootID)) return
+    publishTimers.set(
+      rootID,
+      setTimeout(() => {
+        publishTimers.delete(rootID)
+        const entry = {
+          spent: spentOn(rootID),
+          subagents: subagents.has(rootID),
+          updatedAt: Date.now(),
+        }
+        // Published under every id in the branch, not just the root, so a
+        // sidebar opened on a sub-agent session reports the budget that
+        // actually governs it rather than falling back to nothing.
+        for (const id of branch.get(rootID) ?? [rootID]) spend.sessions[id] = entry
+        saveSpend(spend)
+      }, 300),
+    )
+  }
+
   function limitOf(rootID) {
     const entry = store.sessions[rootID]
     return entry ? deserialize(entry.limit) : store.default
@@ -175,13 +242,19 @@ export const BudgetPlugin = async ({ client, directory }) => {
         try {
           const { data } = await client.session.messages({ path: { id }, query: { limit: 10000 } })
           for (const { info } of data ?? []) {
-            if (info.role === "assistant" && info.cost > 0) map.set(info.id, info.cost)
+            if (info.role !== "assistant" || !(info.cost > 0)) continue
+            map.set(info.id, info.cost)
+            if (id !== rootID) subagents.add(rootID)
+            let ids = branch.get(rootID)
+            if (!ids) branch.set(rootID, (ids = new Set([rootID])))
+            ids.add(id)
           }
         } catch (e) {
           dbg("[budget] messages error:", id, e?.message)
         }
       }
       dbg("[budget] backfilled", rootID, "spent:", spentOn(rootID).toFixed(4))
+      publishSpent(rootID)
     })()
     backfills.set(rootID, pending)
     return pending
@@ -346,11 +419,17 @@ export const BudgetPlugin = async ({ client, directory }) => {
           saveStore(store)
         }
         costs.delete(id)
+        if (id && spend.sessions[id]) {
+          delete spend.sessions[id]
+          saveSpend(spend)
+        }
         rootCache.delete(id)
         backfills.delete(id)
         notified.delete(id)
         warned.delete(id)
         interrupted.delete(id)
+        subagents.delete(id)
+        branch.delete(id)
         return
       }
 
@@ -361,6 +440,11 @@ export const BudgetPlugin = async ({ client, directory }) => {
       const rootID = await rootOf(info.sessionID)
       await backfill(rootID)
       costMap(rootID).set(info.id, info.cost)
+      if (info.sessionID !== rootID) subagents.add(rootID)
+      let ids = branch.get(rootID)
+      if (!ids) branch.set(rootID, (ids = new Set([rootID])))
+      ids.add(info.sessionID)
+      publishSpent(rootID)
       await enforceRunning(rootID, info.sessionID)
     },
   }
