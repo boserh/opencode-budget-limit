@@ -1,6 +1,6 @@
 {
   "name": "opencode-budget-limit",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Per-session spend limits for opencode, with a sidebar readout.",
   "type": "module",
   "license": "MIT",
