@@ -107,6 +107,25 @@ function saveSpend(spend) {
   }
 }
 
+/**
+ * OpenCode loads one plugin instance per project location, so several copies
+ * of this module share the same files. Each write therefore re-reads the file
+ * and changes only its own entries; saving a whole in-memory copy would put
+ * back limits another instance had just changed.
+ */
+function updateStore(change) {
+  const store = loadStore()
+  change(store)
+  saveStore(store)
+  return store
+}
+
+function updateSpend(change) {
+  const spend = loadSpend()
+  change(spend)
+  saveSpend(spend)
+}
+
 const serialize = (limit) => (limit === UNLIMITED ? "unlimited" : limit)
 const deserialize = (limit) => (limit === "unlimited" || limit === null ? UNLIMITED : limit)
 const fmt = (amount) => (amount === UNLIMITED ? "unlimited" : `$${amount.toFixed(2)}`)
@@ -114,9 +133,7 @@ const fmt = (amount) => (amount === UNLIMITED ? "unlimited" : `$${amount.toFixed
 export default Plugin.define({
   id: "budget-limit",
   async setup(ctx) {
-    const store = loadStore()
-    saveStore(store) // persist migration / prune once at startup
-    const spend = loadSpend()
+    saveStore(loadStore()) // persist migration / prune once at startup
 
     /** @type {Map<string, ReturnType<typeof setTimeout>>} rootID -> pending publish */
     const publishTimers = new Map()
@@ -204,37 +221,42 @@ export default Plugin.define({
           // Published under every id in the branch, not just the root, so a
           // sidebar opened on a sub-agent session reports the budget that
           // actually governs it rather than falling back to nothing.
-          for (const id of branch.get(rootID) ?? [rootID]) spend.sessions[id] = entry
-          saveSpend(spend)
+          updateSpend((spend) => {
+            for (const id of branch.get(rootID) ?? [rootID]) spend.sessions[id] = entry
+          })
         }, 300),
       )
     }
 
+    /** Read from disk every time: another instance may have changed it. */
     function limitOf(rootID) {
+      const store = loadStore()
       const entry = store.sessions[rootID]
       return entry ? deserialize(entry.limit) : store.default
     }
 
     function setLimit(rootID, limit) {
-      const entry = store.sessions[rootID] ?? {}
-      store.sessions[rootID] = { ...entry, limit: serialize(limit), updatedAt: Date.now() }
-      saveStore(store)
+      updateStore((store) => {
+        const entry = store.sessions[rootID] ?? {}
+        store.sessions[rootID] = { ...entry, limit: serialize(limit), updatedAt: Date.now() }
+      })
     }
 
     /** Persisted so a restart between the abort and the raise does not lose it. */
     function markInterrupted(rootID, value) {
-      const entry = store.sessions[rootID]
-      if (!entry && !value) return
-      store.sessions[rootID] = {
-        limit: entry?.limit ?? serialize(store.default),
-        updatedAt: Date.now(),
-        ...(value ? { interrupted: true } : {}),
-      }
-      saveStore(store)
+      updateStore((store) => {
+        const entry = store.sessions[rootID]
+        if (!entry && !value) return
+        store.sessions[rootID] = {
+          limit: entry?.limit ?? serialize(store.default),
+          updatedAt: Date.now(),
+          ...(value ? { interrupted: true } : {}),
+        }
+      })
     }
 
     function wasInterruptedBefore(rootID) {
-      return store.sessions[rootID]?.interrupted === true
+      return loadStore().sessions[rootID]?.interrupted === true
     }
 
     /**
@@ -325,9 +347,7 @@ export default Plugin.define({
       if (arg === "off" || arg === "unlimited") {
         next = UNLIMITED
       } else if (arg === "reset") {
-        delete store.sessions[rootID]
-        saveStore(store)
-        next = store.default
+        next = updateStore((store) => delete store.sessions[rootID]).default
       } else {
         const relative = arg.startsWith("+")
         const amount = Number.parseFloat(relative ? arg.slice(1) : arg)
@@ -408,15 +428,9 @@ export default Plugin.define({
       for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
         if (event.type === "session.deleted") {
           const id = event.data?.sessionID
-          if (id && store.sessions[id]) {
-            delete store.sessions[id]
-            saveStore(store)
-          }
+          if (id && loadStore().sessions[id]) updateStore((store) => delete store.sessions[id])
           costs.delete(id)
-          if (id && spend.sessions[id]) {
-            delete spend.sessions[id]
-            saveSpend(spend)
-          }
+          if (id && loadSpend().sessions[id]) updateSpend((spend) => delete spend.sessions[id])
           rootCache.delete(id)
           backfills.delete(id)
           notified.delete(id)
