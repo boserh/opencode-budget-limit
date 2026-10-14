@@ -145,7 +145,8 @@ export default Plugin.define({
      * shows up in the session transcript regardless of which client is attached.
      */
     async function notify(sessionID, message) {
-      await ctx.session.synthetic({ sessionID, text: `[Budget] ${message}` }).catch((e) => {
+      // resume: false keeps the note in the transcript without waking the agent.
+      await ctx.session.synthetic({ sessionID, text: `[Budget] ${message}`, resume: false }).catch((e) => {
         dbg("[budget] notify error:", e?.message)
       })
     }
