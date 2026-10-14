@@ -43,7 +43,7 @@ feet.
 
 ## Requirements
 
-- opencode **1.18** or newer.
+- opencode **2.0** or newer. (For opencode 1.x, use `opencode-budget-limit@1.0.2`.)
 - macOS or Linux. Windows is not supported.
 
 ## Install
@@ -58,15 +58,9 @@ config files. `opencode plugin` reads the package's `exports`, notices both
 targets, and writes each one into the right file for you: the server entry into
 `opencode.json` and the TUI entry into `tui.json`.
 
-Then add the slash command at `~/.config/opencode/commands/budget.md`:
-
-```markdown
----
-description: Show or change the spend limit for this session
----
-
-budget $ARGUMENTS
-```
+The server plugin registers its own `/budget` command, so there is no separate
+markdown command file to install. If you are upgrading from 1.x, delete
+`~/.config/opencode/commands/budget.md` — it is now redundant.
 
 Restart opencode.
 
