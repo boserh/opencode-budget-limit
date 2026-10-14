@@ -34,7 +34,7 @@ const KID_COST = 0.427
  * the real event stream does.
  */
 function fakeContext() {
-  const sessions = { root: {}, kid: { parentID: "root" } }
+  const sessions = { root: { cost: 0 }, kid: { parentID: "root", cost: 0 } }
   const notifications = []
   const queue = []
   let waiting = null
@@ -42,7 +42,6 @@ function fakeContext() {
   const ctx = {
     session: {
       get: async ({ sessionID }) => sessions[sessionID],
-      context: async ({ sessionID }) => (sessionID === "root" ? [] : []),
       interrupt: async () => {},
       prompt: async () => ({}),
       synthetic: async ({ sessionID, text }) => {
@@ -72,6 +71,7 @@ function fakeContext() {
   let eventID = 0
   return {
     ctx,
+    sessions,
     notifications,
     emit: (event) => {
       const full = { id: `evt_${eventID++}`, ...event }
@@ -95,11 +95,24 @@ async function runTurnWithSubagent() {
   const host = fakeContext()
   await plugin.setup(host.ctx)
   host.emit({ type: "session.forked", data: { sessionID: "kid", parentID: "root" } })
+  host.sessions.root.cost = ROOT_COST
   host.emit({ type: "session.usage.updated", data: { sessionID: "root", cost: ROOT_COST } })
+  host.sessions.kid.cost = KID_COST
   host.emit({ type: "session.usage.updated", data: { sessionID: "kid", cost: KID_COST } })
   await settle()
   return host
 }
+
+test("repeated usage events for one message count its cost once", async () => {
+  const host = fakeContext()
+  await plugin.setup(host.ctx)
+  host.sessions.root.cost = ROOT_COST
+  for (let i = 0; i < 4; i++) {
+    host.emit({ type: "session.usage.updated", data: { sessionID: "root", cost: ROOT_COST } })
+  }
+  await settle()
+  assert.equal(readSpend().sessions.root.spent, ROOT_COST, "the session's own total is the spend, however many events reported it")
+})
 
 test("the published total spans the whole branch, not just the visible session", async () => {
   await runTurnWithSubagent()
@@ -128,6 +141,7 @@ test("the sub-agent flag is only set when a sub-agent actually spent", async () 
   // A fresh plugin instance, this time with no fork at all.
   const host = fakeContext()
   await plugin.setup(host.ctx)
+  host.sessions.root.cost = ROOT_COST
   host.emit({ type: "session.usage.updated", data: { sessionID: "root", cost: ROOT_COST } })
   await settle()
 

@@ -31,8 +31,7 @@ async function instance() {
   let gate
   const ctx = {
     session: {
-      get: async () => ({}),
-      context: async () => [{ id: "msg_1", type: "assistant", cost: 2 }],
+      get: async () => ({ cost: 2 }),
       interrupt: async ({ sessionID }) => interrupts.push(sessionID),
       prompt: async () => ({}),
       synthetic: async () => {},
