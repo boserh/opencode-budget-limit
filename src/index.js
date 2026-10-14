@@ -190,6 +190,7 @@ export default Plugin.define({
       return pending
     }
 
+    /** rootID -> sessionID -> that session's own total cost, as opencode reports it. */
     function costMap(rootID) {
       let map = costs.get(rootID)
       if (!map) costs.set(rootID, (map = new Map()))
@@ -260,29 +261,35 @@ export default Plugin.define({
     }
 
     /**
-     * Backfill the root's own historic cost once per root (deduped by promise,
-     * not by flag, to avoid races).
+     * Costs are read from the session itself, never summed from events: a
+     * single message emits several `session.usage.updated` events, so adding
+     * them up counted the same spend many times over.
+     */
+    async function refreshCost(rootID, sessionID) {
+      try {
+        const info = await ctx.session.get({ sessionID })
+        if (typeof info?.cost === "number") costMap(rootID).set(sessionID, info.cost)
+      } catch (e) {
+        dbg("[budget] cost refresh error:", sessionID, e?.message)
+      }
+    }
+
+    /**
+     * Load the root's own cost once per root (deduped by promise, not by flag,
+     * to avoid races).
      *
      * V2 has no session-children listing in the plugin context (V1's
-     * `client.session.children` has no equivalent here), so this can only
-     * replay the root's own messages. Sub-agent cost is instead picked up live
-     * from `session.forked` / `session.usage.updated` events in the main event
-     * loop below; a sub-agent that spent before this plugin instance started
-     * is not retroactively counted.
+     * `client.session.children` has no equivalent here), so only the root is
+     * known up front. Sub-agent sessions join the branch live from
+     * `session.forked` / `session.usage.updated` events in the main event loop
+     * below; a sub-agent that spent before this plugin instance started is not
+     * retroactively counted.
      */
     async function backfill(rootID) {
       const inflight = backfills.get(rootID)
       if (inflight) return inflight
       const pending = (async () => {
-        try {
-          const messages = await ctx.session.context({ sessionID: rootID })
-          for (const message of messages ?? []) {
-            if (message.type !== "assistant" || !(message.cost > 0)) continue
-            costMap(rootID).set(message.id, message.cost)
-          }
-        } catch (e) {
-          dbg("[budget] context error:", rootID, e?.message)
-        }
+        await refreshCost(rootID, rootID)
         dbg("[budget] backfilled", rootID, "spent:", spentOn(rootID).toFixed(4))
         publishSpent(rootID)
       })()
@@ -450,16 +457,14 @@ export default Plugin.define({
         }
 
         if (event.type !== "session.usage.updated") continue
-        // Assumed to be this message's own cost, not a running total, mirroring
-        // how V1 kept one cost per assistant message id rather than overwriting
-        // a cumulative figure. Revisit if `session.usage.updated` turns out to
-        // report the session's total instead.
+        // Only a signal that this session's cost moved; the amount is re-read
+        // from the session so repeated events cannot be counted twice.
         const { sessionID, cost } = event.data
         if (!(cost > 0)) continue
 
         const rootID = await rootOf(sessionID)
         await backfill(rootID)
-        costMap(rootID).set(event.id, cost)
+        await refreshCost(rootID, sessionID)
         if (sessionID !== rootID) subagents.add(rootID)
         let ids = branch.get(rootID)
         if (!ids) branch.set(rootID, (ids = new Set([rootID])))
