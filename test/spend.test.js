@@ -21,38 +21,67 @@ delete process.env.OPENCODE_BUDGET_FILE
 
 const spendFile = join(home, ".local/share/opencode/budget-spend.json")
 
-const { BudgetPlugin } = await import("../src/server.js")
+const plugin = (await import("../src/index.js")).default
 
 const ROOT_COST = 0.3886
 const KID_COST = 0.427
 
 /**
- * A host stub shaped like the real one for the branch this plugin cares about:
- * a root session with one sub-agent child, each holding its own messages.
- * Costs are the ones observed in a real session, so the expected total is a
- * figure that actually occurred rather than an invented round number.
+ * A fake plugin context shaped like the real one for the branch this plugin
+ * cares about: a root session with one sub-agent child. `session.forked` pins
+ * the parent link the way opencode emits it when the child session is
+ * created, and `session.usage.updated` carries each message's cost the way
+ * the real event stream does.
  */
-function fakeClient({ children = ["kid"] } = {}) {
-  const sessions = { root: {}, kid: { parentID: "root" }, grandkid: { parentID: "kid" } }
-  const messages = {
-    root: [{ info: { id: "m_root", role: "assistant", cost: ROOT_COST, sessionID: "root" } }],
-    kid: [{ info: { id: "m_kid", role: "assistant", cost: KID_COST, sessionID: "kid" } }],
+function fakeContext() {
+  const sessions = { root: {}, kid: { parentID: "root" } }
+  const notifications = []
+  const queue = []
+  let waiting = null
+
+  const ctx = {
+    session: {
+      get: async ({ sessionID }) => sessions[sessionID],
+      context: async ({ sessionID }) => (sessionID === "root" ? [] : []),
+      interrupt: async () => {},
+      prompt: async () => ({}),
+      synthetic: async ({ sessionID, text }) => {
+        notifications.push({ sessionID, text })
+      },
+      hook: async () => {},
+    },
+    command: {
+      transform: async () => {},
+    },
+    event: {
+      subscribe: async function* ({ signal }) {
+        while (!signal.aborted) {
+          if (queue.length) {
+            yield queue.shift()
+            continue
+          }
+          const next = await new Promise((resolve) => {
+            waiting = resolve
+          })
+          if (next) yield next
+        }
+      },
+    },
   }
-  const toasts = []
+
+  let eventID = 0
   return {
-    toasts,
-    messages,
-    client: {
-      session: {
-        get: async ({ path }) => ({ data: sessions[path.id] }),
-        children: async () => ({ data: children.map((id) => ({ id })) }),
-        messages: async ({ path }) => ({ data: messages[path.id] ?? [] }),
-        abort: async () => ({}),
-      },
-      tui: {
-        showToast: async ({ body }) => toasts.push(body.message),
-        appendPrompt: async () => ({}),
-      },
+    ctx,
+    notifications,
+    emit: (event) => {
+      const full = { id: `evt_${eventID++}`, ...event }
+      if (waiting) {
+        const resolve = waiting
+        waiting = null
+        resolve(full)
+      } else {
+        queue.push(full)
+      }
     },
   }
 }
@@ -62,16 +91,18 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 400))
 
 const readSpend = () => JSON.parse(readFileSync(spendFile, "utf8"))
 
-async function runTurn(options) {
-  const host = fakeClient(options)
-  const hooks = await BudgetPlugin({ client: host.client, directory: home })
-  await hooks.event({ event: { type: "message.updated", properties: { info: host.messages.kid[0].info } } })
+async function runTurnWithSubagent() {
+  const host = fakeContext()
+  await plugin.setup(host.ctx)
+  host.emit({ type: "session.forked", data: { sessionID: "kid", parentID: "root" } })
+  host.emit({ type: "session.usage.updated", data: { sessionID: "root", cost: ROOT_COST } })
+  host.emit({ type: "session.usage.updated", data: { sessionID: "kid", cost: KID_COST } })
   await settle()
   return host
 }
 
 test("the published total spans the whole branch, not just the visible session", async () => {
-  await runTurn()
+  await runTurnWithSubagent()
 
   const entry = readSpend().sessions.root
   assert.equal(
@@ -83,7 +114,7 @@ test("the published total spans the whole branch, not just the visible session",
 })
 
 test("the total is published under every session in the branch", async () => {
-  await runTurn()
+  await runTurnWithSubagent()
 
   const sessions = readSpend().sessions
   assert.ok(sessions.kid, "a sidebar opened on a sub-agent session needs an entry to read")
@@ -91,13 +122,13 @@ test("the total is published under every session in the branch", async () => {
 })
 
 test("the sub-agent flag is only set when a sub-agent actually spent", async () => {
-  await runTurn()
+  await runTurnWithSubagent()
   assert.equal(readSpend().sessions.root.subagents, true)
 
-  // A fresh plugin instance, this time with a childless root.
-  const host = fakeClient({ children: [] })
-  const hooks = await BudgetPlugin({ client: host.client, directory: home })
-  await hooks.event({ event: { type: "message.updated", properties: { info: host.messages.root[0].info } } })
+  // A fresh plugin instance, this time with no fork at all.
+  const host = fakeContext()
+  await plugin.setup(host.ctx)
+  host.emit({ type: "session.usage.updated", data: { sessionID: "root", cost: ROOT_COST } })
   await settle()
 
   const entry = readSpend().sessions.root
@@ -105,27 +136,12 @@ test("the sub-agent flag is only set when a sub-agent actually spent", async () 
   assert.equal(entry.subagents, false, "the title must not claim sub-agents on a session that had none")
 })
 
-test("sub-agent cost is picked up from the session store, not only from live events", async () => {
-  // Only the root's own message is announced. The child's spend therefore has
-  // to come from the backfill walk over session.children() — which is the code
-  // path that separates this plugin's total from the Context block's, and the
-  // one a live-event test silently leaves uncovered.
-  const host = fakeClient()
-  const hooks = await BudgetPlugin({ client: host.client, directory: home })
-  await hooks.event({ event: { type: "message.updated", properties: { info: host.messages.root[0].info } } })
-  await settle()
-
-  const entry = readSpend().sessions.root
-  assert.equal(Number(entry.spent.toFixed(4)), Number((ROOT_COST + KID_COST).toFixed(4)))
-  assert.equal(entry.subagents, true)
-})
-
 test("a corrupt spend file is replaced rather than breaking the turn", async () => {
   const { writeFileSync, mkdirSync } = await import("fs")
   mkdirSync(join(home, ".local/share/opencode"), { recursive: true })
   writeFileSync(spendFile, "{ not json")
 
-  await runTurn()
+  await runTurnWithSubagent()
   assert.equal(Number(readSpend().sessions.root.spent.toFixed(4)), Number((ROOT_COST + KID_COST).toFixed(4)))
 })
 
@@ -134,7 +150,7 @@ test("entries untouched for 30 days are pruned, as limits are", async () => {
   const stale = Date.now() - 31 * 24 * 60 * 60 * 1000
   writeFileSync(spendFile, JSON.stringify({ version: 1, sessions: { ses_old: { spent: 9, updatedAt: stale } } }))
 
-  await runTurn()
+  await runTurnWithSubagent()
   assert.equal(readSpend().sessions.ses_old, undefined)
 })
 

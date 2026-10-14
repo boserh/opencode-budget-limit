@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.0.0
+
+Ports the plugin to the OpenCode V2 plugin API (`@opencode/plugin`,
+`Plugin.define`, `setup(ctx)`). V1's plugin runtime does not load under
+OpenCode 2.x, so this is a breaking change for anyone still on OpenCode 1.x —
+stay on `1.0.2` there.
+
+- The server entry (`src/index.ts`, replacing `src/server.js`) now registers
+  hooks and transforms on `ctx` instead of returning a hooks object. The
+  `/budget` command is now registered directly via `ctx.command.transform`,
+  so the separate `~/.config/opencode/commands/budget.md` file is no longer
+  needed — delete it after upgrading.
+- Toasts have no server-side equivalent in V2 (toasts are a CLI-only concept),
+  so budget notices are now delivered as synthetic session messages instead.
+- Turn gating moved from the removed `chat.message` hook to the `context`
+  session hook, which also now catches tool-driven continuations mid-turn.
+- `engines.opencode` raised to `>=2.0.0`.
+
 ## 1.0.0
 
 First stable release. The plugin API and the on-disk format are settled: the

@@ -1,6 +1,6 @@
 {
   "name": "opencode-budget-limit",
-  "version": "1.0.2",
+  "version": "2.0.0",
   "description": "Per-session spend limits for opencode, with a sidebar readout.",
   "type": "module",
   "license": "MIT",
@@ -20,7 +20,7 @@
     "spend-limit"
   ],
   "exports": {
-    "./server": "./src/server.js",
+    ".": "./src/index.js",
     "./tui": "./dist/tui.js"
   },
   "files": [
@@ -28,12 +28,15 @@
     "dist"
   ],
   "engines": {
-    "opencode": ">=1.18.0"
+    "opencode": ">=2.0.0"
   },
   "scripts": {
     "build": "node build.mjs",
     "test": "node --test",
     "prepublishOnly": "node build.mjs"
+  },
+  "dependencies": {
+    "@opencode/plugin": "^2.0.29"
   },
   "devDependencies": {
     "@babel/core": "^7.25.0",

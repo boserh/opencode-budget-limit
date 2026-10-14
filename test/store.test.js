@@ -22,7 +22,7 @@ const legacyDir = join(home, ".config/opencode/plugins")
 const legacyFile = join(legacyDir, "budget-limit.json")
 const currentFile = join(home, ".local/share/opencode/budget-limit.json")
 
-const { loadStore, saveStore } = await import("../src/server.js")
+const { loadStore, saveStore } = await import("../src/index.js")
 
 const readCurrent = () => JSON.parse(readFileSync(currentFile, "utf8"))
 const DAY = 24 * 60 * 60 * 1000
