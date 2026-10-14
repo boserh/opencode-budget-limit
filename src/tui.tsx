@@ -1,17 +1,19 @@
 /**
  * Sidebar readout for the spend limit enforced by the server entry.
  *
- * This is a different surface from a server plugin: the module default-exports
- * `{ id, tui }` and renders Solid JSX into a host slot instead of returning hook
- * factories. The host resolves it through `exports["./tui"]` in package.json,
- * and that entry must stay inside the package directory.
+ * This is a different surface from the server plugin: the module default-exports
+ * a V2 TUI definition (`Plugin.define({ id, setup })` from
+ * `@opencode/plugin/tui`) and claims a place in the host slot tree instead of
+ * subscribing to events. The host resolves it through `exports["./tui"]` in
+ * package.json, and that entry must stay inside the package directory.
  *
  * The host's Solid JSX transform deliberately skips node_modules, so this file
  * is compiled ahead of time by build.mjs and shipped as dist/tui.js.
  *
- * `sidebar_content` is the same slot the built-in Context block renders into.
+ * `sidebar.content` is the same slot the built-in Context block renders into.
  */
 import { readFileSync } from "fs"
+import { Plugin } from "@opencode/plugin/tui"
 import { createMemo, createSignal, onCleanup } from "solid-js"
 import { resolveReadFile, resolveSpendFile } from "./budget-file.js"
 
@@ -59,16 +61,16 @@ function readSpend(sessionID) {
 }
 
 function BudgetPanel(props) {
-  const theme = () => props.api.theme.current
+  const theme = () => props.ctx.theme
 
-  const initial = readSpend(props.session_id)
-  const [limit, setLimit] = createSignal(readLimit(props.session_id))
+  const initial = readSpend(props.sessionID)
+  const [limit, setLimit] = createSignal(readLimit(props.sessionID))
   const [spent, setSpent] = createSignal(initial?.spent ?? 0)
   const [subagents, setSubagents] = createSignal(initial?.subagents ?? false)
 
   const poll = () => {
-    setLimit(readLimit(props.session_id))
-    const next = readSpend(props.session_id)
+    setLimit(readLimit(props.sessionID))
+    const next = readSpend(props.sessionID)
     if (!next) return
     setSpent(next.spent)
     setSubagents(next.subagents)
@@ -91,46 +93,41 @@ function BudgetPanel(props) {
 
   const colour = createMemo(() => {
     const value = ratio()
-    if (value === null) return theme().textMuted
-    if (value >= 0.95) return theme().error
-    if (value >= 0.8) return theme().warning
-    return theme().success
+    if (value === null) return theme().text.muted
+    if (value >= 0.95) return theme().text.feedback.error.base
+    if (value >= 0.8) return theme().text.feedback.warning.base
+    return theme().text.feedback.success.base
   })
 
   return (
     <box>
-      <text fg={theme().text}>
+      <text fg={theme().text.base}>
         <b>Budget</b>
         {subagents() ? " (with sub-agents)" : ""}
       </text>
       {ratio() === null ? (
-        <text fg={theme().textMuted}>{currency.format(spent())} spent, no limit</text>
+        <text fg={theme().text.muted}>{currency.format(spent())} spent, no limit</text>
       ) : (
         <>
           <text fg={colour()}>{bar()}</text>
-          <text fg={theme().textMuted}>
+          <text fg={theme().text.muted}>
             {currency.format(spent())} of {currency.format(limit())}
           </text>
-          <text fg={theme().textMuted}>{Math.round(ratio() * 100)}% used</text>
+          <text fg={theme().text.muted}>{Math.round(ratio() * 100)}% used</text>
         </>
       )}
     </box>
   )
 }
 
-export const BudgetSidebar = {
+export default Plugin.define({
   id: "budget-limit-sidebar",
-  tui: async (api) => {
-    api.slots.register({
-      // Directly under the built-in Context block (100); files render at 500.
-      order: 150,
-      slots: {
-        sidebar_content(_ctx, props) {
-          return <BudgetPanel api={api} session_id={props.session_id} />
-        },
-      },
+  setup(ctx) {
+    // Appended inside the sidebar boundary, so it lands after the built-in
+    // Context block. The returned release function is the plugin's cleanup.
+    return ctx.ui.slot({
+      append: "sidebar.content",
+      render: (input) => <BudgetPanel ctx={ctx} sessionID={input.sessionID} />,
     })
   },
-}
-
-export default BudgetSidebar
+})
