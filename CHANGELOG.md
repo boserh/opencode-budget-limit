@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.0.6
+
+- Toasts are back: threshold warnings, "limit reached" and limit changes are
+  shown as TUI popups again, raised by the sidebar entry. The server now posts
+  into the transcript only to answer `/budget`.
+- Fix tracked spend running 3-9x high: costs are read from each session's own
+  total instead of being summed per `session.usage.updated` event (2.0.5).
+- Fix `/budget` changes reverting after the next turn when opencode runs
+  several plugin instances (2.0.4).
+- Fix `/budget` replies starting a new agent turn (2.0.3).
+- Port the sidebar to the V2 TUI plugin API (2.0.2).
+
 ## 2.0.0
 
 Ports the plugin to the OpenCode V2 plugin API (`@opencode/plugin`,

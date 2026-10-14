@@ -28,7 +28,9 @@ feet.
   before any tokens are spent, and an in-flight turn that blows past the limit
   mid-run is aborted.
 - **Warnings.** One-off toasts at 50%, 80% and 95% of the limit, so spend is
-  visible before it becomes a wall.
+  visible before it becomes a wall, plus one when the limit is reached or
+  changed. Toasts come from the TUI entry, so they need the sidebar plugin
+  enabled.
 - **Sidebar block.** A progress bar, amount spent, and percentage used, rendered
   directly under the built-in Context block.
 

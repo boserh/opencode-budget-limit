@@ -16,6 +16,7 @@ import { readFileSync } from "fs"
 import { Plugin } from "@opencode/plugin/tui"
 import { createMemo, createSignal, onCleanup } from "solid-js"
 import { resolveReadFile, resolveSpendFile } from "./budget-file.js"
+import { budgetToasts } from "./toasts.js"
 
 const FALLBACK_DEFAULT = Number(process.env.OPENCODE_BUDGET_DEFAULT) || 1
 const POLL_MS = 2000
@@ -68,12 +69,15 @@ function BudgetPanel(props) {
   const [spent, setSpent] = createSignal(initial?.spent ?? 0)
   const [subagents, setSubagents] = createSignal(initial?.subagents ?? false)
 
+  const toast = budgetToasts(props.ctx)
   const poll = () => {
     setLimit(readLimit(props.sessionID))
     const next = readSpend(props.sessionID)
-    if (!next) return
-    setSpent(next.spent)
-    setSubagents(next.subagents)
+    if (next) {
+      setSpent(next.spent)
+      setSubagents(next.subagents)
+    }
+    toast(props.sessionID, spent(), limit())
   }
   const timer = setInterval(poll, POLL_MS)
   onCleanup(() => clearInterval(timer))
