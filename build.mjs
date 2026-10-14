@@ -39,7 +39,8 @@ if (!result?.code) throw new Error("babel produced no output")
 
 await mkdir(outDir, { recursive: true })
 await writeFile(out, result.code)
-// dist/tui.js imports ./budget-file.js, so the helper ships next to it.
+// dist/tui.js imports these helpers, so they ship next to it.
 await copyFile(join(root, "src", "budget-file.js"), join(outDir, "budget-file.js"))
+await copyFile(join(root, "src", "toasts.js"), join(outDir, "toasts.js"))
 
 console.log(`built ${out} (${result.code.length} bytes)`)

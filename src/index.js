@@ -11,13 +11,6 @@ const FALLBACK_DEFAULT = Number(process.env.OPENCODE_BUDGET_DEFAULT) || 1
 const PRUNE_AFTER_MS = 30 * 24 * 60 * 60 * 1000
 const UNLIMITED = Infinity
 
-/** Fractions of the limit that trigger a one-off heads-up toast. */
-const WARN_AT = (process.env.OPENCODE_BUDGET_WARN ?? "0.5,0.8,0.95")
-  .split(",")
-  .map((v) => Number.parseFloat(v))
-  .filter((v) => Number.isFinite(v) && v > 0 && v < 1)
-  .sort((a, b) => a - b)
-
 const USAGE = "Usage: /budget [ <amount> | +<amount> | off | reset ]"
 
 function dbg(...args) {
@@ -148,18 +141,14 @@ export default Plugin.define({
     const rootCache = new Map()
     /** @type {Map<string, Promise<void>>} rootID -> in-flight backfill */
     const backfills = new Map()
-    /** @type {Set<string>} roots already toasted for being over budget */
-    const notified = new Set()
-    /** @type {Map<string, number>} rootID -> highest warning fraction already shown */
-    const warned = new Map()
     /** @type {Set<string>} sessions whose run we killed, i.e. work left unfinished */
     const interrupted = new Set()
 
     /**
-     * There is no toast API on the server plugin context — toasts are a CLI
-     * (local TUI) concept, and the server can be driving a headless or remote
-     * client. A synthetic message is the closest server-side equivalent: it
-     * shows up in the session transcript regardless of which client is attached.
+     * Replies to /budget only. There is no toast API on the server plugin
+     * context, so threshold warnings and "limit reached" are toasts raised by
+     * the TUI entry instead; one TUI shows each once, where every server
+     * instance would have posted its own copy into the transcript.
      */
     async function notify(sessionID, message) {
       // resume: false keeps the note in the transcript without waking the agent.
@@ -307,34 +296,18 @@ export default Plugin.define({
     }
 
     /** Message once per threshold crossed, so spend is visible before it hard-stops. */
-    async function warnIfNearLimit(rootID, spent, limit) {
-      const ratio = spent / limit
-      const already = warned.get(rootID) ?? 0
-      const crossed = WARN_AT.filter((t) => ratio >= t && t > already).pop()
-      if (!crossed) return
-      warned.set(rootID, crossed)
-      await notify(rootID, statusLine(rootID))
-    }
-
     /** Stop an in-flight run that has already blown past the limit mid-turn. */
     async function enforceRunning(rootID, sessionID) {
       const limit = limitOf(rootID)
       if (limit === UNLIMITED) return
       const spent = spentOn(rootID)
-      if (spent < limit) {
-        await warnIfNearLimit(rootID, spent, limit)
-        return
-      }
+      if (spent < limit) return
       for (const id of new Set([sessionID, rootID])) {
         await ctx.session.interrupt({ sessionID: id, continue: false }).catch(() => {})
       }
       // The run died mid-task, so raising the limit should offer to pick it up.
       interrupted.add(rootID)
       markInterrupted(rootID, true)
-      if (!notified.has(rootID)) {
-        notified.add(rootID)
-        await notify(rootID, `Limit reached: ${fmt(spent)} of ${fmt(limit)}. Raise it with /budget <amount>.`)
-      }
     }
 
     async function runCommand(sessionID, rawArg) {
@@ -366,8 +339,6 @@ export default Plugin.define({
       }
 
       if (arg !== "reset") setLimit(rootID, next)
-      notified.delete(rootID)
-      warned.delete(rootID)
 
       const unblocked = previous !== UNLIMITED && spent >= previous && (next === UNLIMITED || spent < next)
       const wasInterrupted = unblocked && (interrupted.delete(rootID) || wasInterruptedBefore(rootID))
@@ -415,18 +386,8 @@ export default Plugin.define({
       const limit = limitOf(rootID)
       if (limit === UNLIMITED) return
       const spent = spentOn(rootID)
-      if (spent < limit) {
-        await warnIfNearLimit(rootID, spent, limit)
-        return
-      }
+      if (spent < limit) return
       await ctx.session.interrupt({ sessionID: event.sessionID, continue: false }).catch(() => {})
-      if (!notified.has(rootID)) {
-        notified.add(rootID)
-        await notify(
-          event.sessionID,
-          `Limit reached: ${fmt(spent)} of ${fmt(limit)}. Raise it with /budget <amount>, or /budget off.`,
-        )
-      }
       dbg("[budget] cancelled turn on", event.sessionID)
     })
 
@@ -440,8 +401,6 @@ export default Plugin.define({
           if (id && loadSpend().sessions[id]) updateSpend((spend) => delete spend.sessions[id])
           rootCache.delete(id)
           backfills.delete(id)
-          notified.delete(id)
-          warned.delete(id)
           interrupted.delete(id)
           subagents.delete(id)
           branch.delete(id)

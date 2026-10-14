@@ -74,3 +74,10 @@ export function resolveWriteFile() {
   } catch {}
   return current
 }
+
+/** Fractions of the limit that raise a one-off warning toast. */
+export const WARN_AT = (process.env.OPENCODE_BUDGET_WARN ?? "0.5,0.8,0.95")
+  .split(",")
+  .map((v) => Number.parseFloat(v))
+  .filter((v) => Number.isFinite(v) && v > 0 && v < 1)
+  .sort((a, b) => a - b)
